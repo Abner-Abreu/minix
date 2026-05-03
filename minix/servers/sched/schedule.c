@@ -16,6 +16,7 @@
 static unsigned balance_timeout;
 
 #define BALANCE_TIMEOUT	5 /* how often to balance queues in seconds */
+#define MAX_QUANTUM 3 /* max quamtums used before penalty*/
 
 static int schedule_process(struct schedproc * rmp, unsigned flags);
 
@@ -96,8 +97,12 @@ int do_noquantum(message *m_ptr)
 	}
 
 	rmp = &schedproc[proc_nr_n];
-	if (rmp->priority < MIN_USER_Q) {
+
+	rmp->used_quantums += 1;
+
+	if (rmp->used_quantums >= MAX_QUANTUM && rmp->priority +1 < MIN_USER_Q) {
 		rmp->priority += 1; /* lower priority */
+		rmp->used_quantums = 0;
 	}
 
 	if ((rv = schedule_process_local(rmp)) != OK) {
@@ -130,6 +135,7 @@ int do_stop_scheduling(message *m_ptr)
 	cpu_proc[rmp->cpu]--;
 #endif
 	rmp->flags = 0; /*&= ~IN_USE;*/
+	rmp->used_quantums = 0;
 
 	return OK;
 }
@@ -161,6 +167,8 @@ int do_start_scheduling(message *m_ptr)
 	rmp->endpoint     = m_ptr->m_lsys_sched_scheduling_start.endpoint;
 	rmp->parent       = m_ptr->m_lsys_sched_scheduling_start.parent;
 	rmp->max_priority = m_ptr->m_lsys_sched_scheduling_start.maxprio;
+	rmp->used_quantums = 0;
+
 	if (rmp->max_priority >= NR_SCHED_QUEUES) {
 		return EINVAL;
 	}
@@ -280,6 +288,7 @@ int do_nice(message *m_ptr)
 
 	/* Update the proc entry and reschedule the process */
 	rmp->max_priority = rmp->priority = new_q;
+	rmp->used_quantums = 0;
 
 	if ((rv = schedule_process_local(rmp)) != OK) {
 		/* Something went wrong when rescheduling the process, roll
@@ -357,10 +366,12 @@ void balance_queues(void)
 
 	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
 		if (rmp->flags & IN_USE) {
-			if (rmp->priority > rmp->max_priority) {
+			/* check if the proc use no complete quantums and if have anay penalty */
+			if (rmp->priority > rmp->max_priority && rmp->used_quantums == 0) {
 				rmp->priority -= 1; /* increase priority */
 				schedule_process_local(rmp);
 			}
+			rmp->used_quantums = 0;
 		}
 	}
 
