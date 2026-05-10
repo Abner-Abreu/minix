@@ -17,6 +17,7 @@ static unsigned balance_timeout;
 
 #define BALANCE_TIMEOUT	5 /* how often to balance queues in seconds */
 #define MAX_QUANTUM 3 /* max quamtums used before penalty*/
+#define PENALTY 1 /* priority penalty */
 
 static int schedule_process(struct schedproc * rmp, unsigned flags);
 
@@ -88,7 +89,7 @@ static void pick_cpu(struct schedproc * proc)
 int do_noquantum(message *m_ptr)
 {
 	register struct schedproc *rmp;
-	int rv, proc_nr_n;
+	int proc_nr_n;
 
 	if (sched_isokendpt(m_ptr->m_source, &proc_nr_n) != OK) {
 		printf("SCHED: WARNING: got an invalid endpoint in OOQ msg %u.\n",
@@ -100,14 +101,6 @@ int do_noquantum(message *m_ptr)
 
 	rmp->used_quantums += 1;
 
-	if (rmp->used_quantums >= MAX_QUANTUM && rmp->priority +1 < MIN_USER_Q) {
-		rmp->priority += 1; /* lower priority */
-		rmp->used_quantums = 0;
-	}
-
-	if ((rv = schedule_process_local(rmp)) != OK) {
-		return rv;
-	}
 	return OK;
 }
 
@@ -366,8 +359,13 @@ void balance_queues(void)
 
 	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
 		if (rmp->flags & IN_USE) {
-			/* check if the proc use no complete quantums and if have anay penalty */
-			if (rmp->priority > rmp->max_priority && rmp->used_quantums == 0) {
+			
+			if (rmp->used_quantums >= MAX_QUANTUM && rmp->priority + PENALTY <= MIN_USER_Q) {
+				rmp->priority += PENALTY; /* lower priority */
+				schedule_process_local(rmp);
+			}
+
+			else if (rmp->priority > rmp->max_priority && rmp->used_quantums == 0) {
 				rmp->priority -= 1; /* increase priority */
 				schedule_process_local(rmp);
 			}
